@@ -29,8 +29,13 @@ struct SquirrelApp {
       if args.count > 1 {
         switch args[1] {
         case "--register-ghost":
-          let status = TISRegisterInputSource(Bundle.main.bundleURL as CFURL)
-          print("Register status: \(status)")
+          let installer = SquirrelInstaller()
+          if installer.hasRegisteredSources() {
+            print("Register status: 0")
+          } else {
+            let status = TISRegisterInputSource(Bundle.main.bundleURL as CFURL)
+            print("Register status: \(status)")
+          }
           return true
         case "--quit":
           let bundleId = Bundle.main.bundleIdentifier!

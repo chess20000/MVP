@@ -124,13 +124,45 @@ import AppKit
     do {
       let (g, c) = setup("abc")
       c.caret = 1
-      precondition(g.capture(c) && g.capturedPrefix == "a", "real following text no longer blocks capture")
-      precondition(g.valid(c), "following text no longer invalidates a preview")
+      precondition(!g.capture(c), "real following text must not start a ghost")
+      c.text = "ab\nc"; c.caret = 2
+      precondition(!g.capture(c), "text on the next line still counts as following text")
       c.text = "abc\n"; c.caret = 3
-      precondition(g.capture(c) && g.capturedPrefix == "abc", "virtual or real trailing newline must not block capture")
+      precondition(g.capture(c) && g.capturedPrefix == "abc", "trailing newline must not block capture")
+      precondition(g.valid(c), "newline-only suffix must keep an end-of-text preview valid")
+      c.text = "abc "; c.caret = 3
+      precondition(g.capture(c) && g.capturedPrefix == "abc", "trailing space must not block capture")
       c.text = ""; c.caret = 0
       precondition(g.capture(c) && g.capturedPrefix.isEmpty, "empty prefix may be captured")
       precondition(g.valid(c), "empty captured prefix remains valid")
+      g.documentHistory.reset()
+      c.text = "abc"; c.caret = 1; c.textReadable = false
+      precondition(!g.capture(c), "same-line following glyph must block when the suffix string is unreadable")
+      c.caret = 3
+      precondition(g.capture(c), "end of text may capture when the suffix string is unreadable")
+      g.documentHistory.reset()
+      c.text = "abcdef"; c.caret = 1; c.textReadable = false; c.glyphRects = false
+      precondition(!g.capture(c), "unread leftover longer than one unit must block")
+      c.caret = 6
+      precondition(g.capture(c), "unread end of text with no leftover may capture")
+      c.textReadable = true; c.glyphRects = true
+      g.documentHistory.reset()
+      c.text = "左边右边"; c.caret = 2; c.reportedLength = 0
+      precondition(!g.capture(c), "Electron-style zero length must still see following text")
+      c.caret = 4
+      precondition(g.capture(c) && g.capturedPrefix == "左边右边", "zero length at the real end may still capture")
+      c.reportedLength = nil
+      g.cancel()
+    }
+    do {
+      Probe.requests = []; Probe.bodies = []; Probe.complete = nil
+      let (g, c) = setup("左边右边")
+      c.caret = 2
+      g.willCommit("中", client: c)
+      c.text = "左中边右边"; c.caret = 3
+      g.committed("中", client: c)
+      RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.025))
+      precondition(Probe.requests.isEmpty, "commit with following text must not generate")
       g.cancel()
     }
     do {

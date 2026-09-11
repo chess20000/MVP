@@ -1,6 +1,7 @@
 import AppKit
 import InputMethodKit
 import Carbon
+import ApplicationServices
 
 struct GhostToken {
   let id: Int
@@ -805,6 +806,205 @@ final class GhostCompletion {
     return client.attributedSubstring(from: NSRange(location: start, length: range.location - start))?.string
   }
 
+  /// Cursor/Electron often report `length() == 0` while `selectedRange` is mid-document.
+  private func reportedLength(_ client: IMKTextInput, caret: Int) -> Int? {
+    let length = client.length()
+    guard length != NSNotFound, length > 0, caret >= 0, length >= caret else { return nil }
+    return length
+  }
+
+  /// A short window after the caret. Nil means the client could not prove a suffix.
+  private func suffix(_ client: IMKTextInput, range: NSRange) -> String? {
+    guard range.location != NSNotFound, range.location >= 0, range.length == 0 else { return nil }
+    let count = reportedLength(client, caret: range.location).map { min(32, $0 - range.location) } ?? 32
+    if count == 0 { return "" }
+    return readSubstring(client, NSRange(location: range.location, length: count), caret: range.location)
+  }
+
+  /// Web views often only return text when the range starts before the caret.
+  private func spanningSuffix(_ client: IMKTextInput, range: NSRange) -> String? {
+    guard range.location != NSNotFound, range.location >= 0, range.length == 0 else { return nil }
+    let start = max(0, range.location - 16)
+    let end = reportedLength(client, caret: range.location) ?? (range.location + 48)
+    let span = max(0, end - start)
+    if span == 0 { return "" }
+    return readSubstring(client, NSRange(location: start, length: min(64, span)), caret: range.location)
+  }
+
+  private func readSubstring(_ client: IMKTextInput, _ query: NSRange, caret: Int) -> String? {
+    var actual = NSRange(location: NSNotFound, length: 0)
+    let text = client.string(from: query, actualRange: &actual)
+      ?? client.attributedSubstring(from: query)?.string
+    guard let text else {
+      return client.attributedSubstring(from: NSRange(location: caret, length: 1))?.string
+    }
+    let origin = actual.location != NSNotFound ? actual.location : query.location
+    let offset = caret - origin
+    let ns = text as NSString
+    guard offset >= 0 else { return nil }
+    if offset >= ns.length { return "" }
+    return ns.substring(from: offset)
+  }
+
+  private func snapshotFollowingText(after location: Int) -> String? {
+    guard let snapshot = documentHistory.snapshot,
+          snapshot.selection.length == 0, snapshot.selection.location == location,
+          location >= snapshot.start, location < snapshot.end else { return nil }
+    return snapshot.substring(NSRange(location: location, length: snapshot.end - location))
+  }
+
+  /// Next glyph on the same line, used when IMK will not return the suffix string.
+  /// A whole-line box (minX far left of the caret) is ignored; a trailing newline
+  /// wraps and is also ignored.
+  private func hasFollowingGlyphOnLine(_ client: IMKTextInput, range: NSRange) -> Bool {
+    var actual = NSRange(location: NSNotFound, length: 0)
+    let nextRect = client.firstRect(forCharacterRange: NSRange(location: range.location, length: 1), actualRange: &actual)
+    if followingGlyph(nextRect, caret: caret(client)) { return true }
+    var spanActual = NSRange(location: NSNotFound, length: 0)
+    let spanRect = client.firstRect(forCharacterRange: NSRange(location: range.location, length: 16), actualRange: &spanActual)
+    return followingGlyph(spanRect, caret: caret(client), minimumWidth: 12)
+  }
+
+  private func followingGlyph(_ nextRect: NSRect, caret caretRect: NSRect, minimumWidth: CGFloat = 1) -> Bool {
+    guard nextRect.height > 0, nextRect.width > minimumWidth,
+          nextRect.minX.isFinite, nextRect.minY.isFinite,
+          caretRect.height > 0, caretRect.minX.isFinite, caretRect.minY.isFinite else { return false }
+    let sameLine = abs(nextRect.midY - caretRect.midY) < max(caretRect.height, nextRect.height) * 0.75
+    guard sameLine, nextRect.minX >= caretRect.minX - 2 else { return false }
+    return nextRect.maxX > caretRect.maxX + 2
+  }
+
+  private func axString(_ element: AXUIElement, _ key: CFString) -> String? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, key, &value) == .success else { return nil }
+    return value as? String
+  }
+
+  private func axRange(_ element: AXUIElement, _ key: CFString) -> CFRange? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, key, &value) == .success,
+          let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    var range = CFRange()
+    guard AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cfRange, &range) else { return nil }
+    return range
+  }
+
+  private func axNumber(_ element: AXUIElement, _ key: CFString) -> Int? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, key, &value) == .success else { return nil }
+    return (value as? NSNumber)?.intValue
+  }
+
+  private func axTextContext() -> (value: String, caret: Int?, count: Int?)? {
+    if ProcessInfo.processInfo.environment["GHOST_TEST_USER_DIR"] != nil { return nil }
+    guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, pid > 0 else { return nil }
+    let appEl = AXUIElementCreateApplication(pid)
+    var focused: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+          let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+    var element = unsafeBitCast(focused, to: AXUIElement.self)
+    for _ in 0..<8 {
+      let value = axString(element, kAXValueAttribute as CFString)
+      let caret = axRange(element, kAXSelectedTextRangeAttribute as CFString)
+        .map { Int($0.location + $0.length) }
+      let count = axNumber(element, kAXNumberOfCharactersAttribute as CFString)
+        ?? value.map { ($0 as NSString).length }
+      if let value { return (value, caret, count) }
+      if let caret, let count, count > caret { return ("", caret, count) }
+      var parent: CFTypeRef?
+      guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) == .success,
+            let parent, CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+      element = unsafeBitCast(parent, to: AXUIElement.self)
+    }
+    return nil
+  }
+
+  /// Edge/Cursor IMK offsets rarely match AX. Align the confirmed prefix instead.
+  private func accessibilityFollowing(afterPrefix prefix: String?) -> String? {
+    if let after = followingInContext(axTextContext(), prefix: prefix) { return after }
+    return followingInContext(axWindowContext(), prefix: prefix)
+  }
+
+  private func followingInContext(_ context: (value: String, caret: Int?, count: Int?)?,
+                                  prefix: String?) -> String? {
+    guard let context else { return nil }
+    let ns = context.value as NSString
+    if let prefix, !prefix.isEmpty {
+      let found = ns.range(of: prefix, options: .backwards)
+      if found.location != NSNotFound {
+        let after = ns.substring(from: found.location + found.length)
+        return after
+      }
+    }
+    if let caret = context.caret, caret >= 0, caret <= ns.length {
+      return ns.substring(from: caret)
+    }
+    if let caret = context.caret, let count = context.count, count > caret + 1 {
+      return String(repeating: "x", count: min(8, count - caret))
+    }
+    return nil
+  }
+
+  private func axWindowContext() -> (value: String, caret: Int?, count: Int?)? {
+    if ProcessInfo.processInfo.environment["GHOST_TEST_USER_DIR"] != nil { return nil }
+    guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, pid > 0 else { return nil }
+    let appEl = AXUIElementCreateApplication(pid)
+    var focused: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+          let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+    var window: CFTypeRef?
+    let focusedEl = unsafeBitCast(focused, to: AXUIElement.self)
+    guard AXUIElementCopyAttributeValue(focusedEl, kAXWindowAttribute as CFString, &window) == .success,
+          let window, CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+    return axSearch(unsafeBitCast(window, to: AXUIElement.self), depth: 0)
+  }
+
+  private func axSearch(_ element: AXUIElement, depth: Int) -> (value: String, caret: Int?, count: Int?)? {
+    if depth > 8 { return nil }
+    if let value = axString(element, kAXValueAttribute as CFString), value.utf16.count > 0 {
+      let caret = axRange(element, kAXSelectedTextRangeAttribute as CFString)
+        .map { Int($0.location + $0.length) }
+      return (value, caret, (value as NSString).length)
+    }
+    var children: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+          let children = children as? [Any] else { return nil }
+    for child in children.prefix(24) {
+      guard CFGetTypeID(child as AnyObject) == AXUIElementGetTypeID() else { continue }
+      if let found = axSearch(unsafeBitCast(child as AnyObject, to: AXUIElement.self), depth: depth + 1) {
+        return found
+      }
+    }
+    return nil
+  }
+
+  private func isVisibleFollowing(_ text: String?) -> Bool {
+    text?.contains { !$0.isWhitespace } == true
+  }
+
+  private func leftoverUnits(_ client: IMKTextInput, range: NSRange) -> Int? {
+    reportedLength(client, caret: range.location).map { $0 - range.location }
+  }
+
+  private func followingReason(_ client: IMKTextInput, range: NSRange, prefix: String?,
+                               useAX: Bool) -> String? {
+    if let text = suffix(client, range: range), !text.isEmpty {
+      return isVisibleFollowing(text) ? "suffix" : nil
+    }
+    if let text = spanningSuffix(client, range: range), !text.isEmpty {
+      return isVisibleFollowing(text) ? "span" : nil
+    }
+    if let text = snapshotFollowingText(after: range.location), !text.isEmpty {
+      return isVisibleFollowing(text) ? "snapshot" : nil
+    }
+    if let leftover = leftoverUnits(client, range: range), leftover > 1 {
+      return "length"
+    }
+    if hasFollowingGlyphOnLine(client, range: range) { return "glyph" }
+    if useAX, isVisibleFollowing(accessibilityFollowing(afterPrefix: prefix)) { return "ax" }
+    return nil
+  }
+
   private func caret(_ client: IMKTextInput) -> NSRect {
     var rect = NSRect.zero
     _ = client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
@@ -843,8 +1043,16 @@ final class GhostCompletion {
       GhostDiagnostics.record(app: app, reason: "awaiting_committed_selection", fields: ["selection": range.location, "expected": expected])
       return false
     }
-    // No text-length or end-of-document restriction: web editors can report
-    // synthetic trailing characters. The current prefix still anchors each result.
+    // Visible characters after the caret mean mid-text editing; do not generate.
+    // Edge/Cursor often omit the suffix string; prefix-aligned AX text still counts.
+    // Newline-only tails still do not block.
+    if let reason = followingReason(client, range: range, prefix: livePrefix,
+                                    useAX: app != "test.fake") {
+      hasFollowingText = true
+      GhostDiagnostics.record(app: app, reason: "following_text",
+        fields: ["selection": range.location, "length": client.length(), "via": reason])
+      return false
+    }
     let newPrefix = livePrefix ?? recent
     let rect = caret(client)
     guard rect.height > 0, rect.minX.isFinite, rect.minY.isFinite else {
@@ -863,7 +1071,9 @@ final class GhostCompletion {
     capturedApp = app
     capturedRect = rect
     capturedWindowLevel = max(NSWindow.Level.popUpMenu.rawValue, Int(client.windowLevel()) + 1)
-    GhostDiagnostics.record(app: app, reason: "context_ready", fields: ["prefix_length": newPrefix.utf16.count, "window_level": capturedWindowLevel])
+    GhostDiagnostics.record(app: app, reason: "context_ready",
+      fields: ["prefix_length": newPrefix.utf16.count, "window_level": capturedWindowLevel,
+               "length": client.length(), "selection": range.location])
     return true
   }
 
@@ -926,6 +1136,11 @@ final class GhostCompletion {
     let marked = client.markedRange()
     guard marked.location == NSNotFound || marked.length == 0 else { return false }
     guard selectionMatchesCaptured(client) else { return false }
+    if followingReason(client, range: capturedRange, prefix: capturedPrefix,
+                       useAX: capturedApp != "test.fake") != nil {
+      documentNeedsRefresh = true
+      return false
+    }
     // Text is checked on acceptance and the monitor. A post-commit layout move
     // gets one additional text check instead of discarding an otherwise valid stream.
     let current = checkText ? prefix(client, range: capturedRange) : nil
@@ -1041,6 +1256,12 @@ final class GhostCompletion {
 
   private func show(client: IMKTextInput) {
     guard synchronizeBackendGeneration(), active, self.client === client, pendingTab == nil else { return }
+    if followingReason(client, range: capturedRange, prefix: capturedPrefix,
+                       useAX: capturedApp != "test.fake") != nil {
+      panel?.orderOut(nil); visible = false
+      documentNeedsRefresh = true
+      return
+    }
     let ticket = revision
     let raw = buffer.preview
     guard !raw.isEmpty, !raw.contains("<|"), !raw.contains("<think"), !raw.contains("</think") else {

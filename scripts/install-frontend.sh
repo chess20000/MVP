@@ -35,7 +35,7 @@ umask 077
 base="$HOME/Library/Rime/ghost"
 backup="$base/backups/frontend-$FRONTEND_VERSION-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$backup"
-if [[ -d "$FRONTEND_APP" ]]; then /usr/bin/ditto --noqtn "$FRONTEND_APP" "$backup/Squirrel.app"; fi
+if [[ -d "$FRONTEND_APP" ]]; then /usr/bin/ditto --noqtn "$FRONTEND_APP" "$backup/Squirrel.app.bak"; fi
 for name in limits.json 使用说明.md Squirrel-Ghost.pkg; do
   if [[ -f "$base/$name" ]]; then cp "$base/$name" "$backup/$name"; fi
 done
@@ -62,7 +62,30 @@ registration="$("$binary" --register-ghost)"
 printf '%s\n' "$registration"
 [[ "${registration##*$'\n'}" == 'Register status: 0' ]] \
   || frontend_fail "注册输入源失败；未继续启动。备份位于 $backup"
+"$binary" --disable-input-source im.rime.inputmethod.Squirrel.Hant || true
 "$binary" --enable-input-source im.rime.inputmethod.Squirrel.Hans
+/usr/bin/python3 - <<'PY' || true
+import plistlib, subprocess
+from pathlib import Path
+plist = Path.home() / "Library/Preferences/com.apple.HIToolbox.plist"
+data = plistlib.loads(plist.read_bytes())
+enabled = list(data.get("AppleEnabledInputSources") or [])
+kept, saw = [], False
+for item in enabled:
+    if item.get("Bundle ID") == "im.rime.inputmethod.Squirrel":
+        if saw:
+            continue
+        item = {"Bundle ID": "im.rime.inputmethod.Squirrel", "Input Mode": "im.rime.inputmethod.Squirrel.Hans", "InputSourceKind": "Input Mode"}
+        saw = True
+    kept.append(item)
+if not saw:
+    kept.append({"Bundle ID": "im.rime.inputmethod.Squirrel", "Input Mode": "im.rime.inputmethod.Squirrel.Hans", "InputSourceKind": "Input Mode"})
+if kept != enabled:
+    data["AppleEnabledInputSources"] = kept
+    tmp = Path("/tmp/hitoolbox-squirrel.plist")
+    tmp.write_bytes(plistlib.dumps(data, fmt=plistlib.FMT_BINARY))
+    subprocess.run(["defaults", "import", "com.apple.HIToolbox", str(tmp)], check=True)
+PY
 /usr/bin/open "$FRONTEND_APP"
 "$binary" --select-input-source im.rime.inputmethod.Squirrel.Hans
 

@@ -27,6 +27,11 @@ final class SquirrelInstaller {
     return inputSources
   }()
 
+  func hasRegisteredSources() -> Bool {
+    inputSources["im.rime.inputmethod.Squirrel"] != nil
+      || InputMode.allCases.contains { inputSources[$0.rawValue] != nil }
+  }
+
   func enabledModes() -> [InputMode] {
     var enabledModes = Set<InputMode>()
     for (mode, inputSource) in getInputSource(modes: InputMode.allCases) {

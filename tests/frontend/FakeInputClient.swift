@@ -29,27 +29,42 @@ final class FakeClient: IMKTextInput {
   var textReadable = true
   var rectangleOffsetX = 0
   var rectangleOffsetY = 0
+  var glyphRects = true
+  var reportedLength: Int?
   init(_ text: String, _ caret: Int) { self.text = text; self.caret = caret }
   func selectedRange() -> NSRange { NSRange(location: caret, length: 0) }
   var marked = NSRange(location: NSNotFound, length: 0)
   func markedRange() -> NSRange { marked }
-  func length() -> Int { text.utf16.count }
+  func length() -> Int { reportedLength ?? text.utf16.count }
   func bundleIdentifier() -> String? { "test.fake" }
   func string(from range: NSRange, actualRange: UnsafeMutablePointer<NSRange>) -> String? {
-    guard textReadable, range.location <= length() else { return nil }
-    let count = min(range.length, length() - range.location)
+    let document = text.utf16.count
+    guard textReadable, range.location <= document else { return nil }
+    let count = min(range.length, document - range.location)
     actualRange.pointee = NSRange(location: range.location, length: count)
     return (text as NSString).substring(with: actualRange.pointee)
   }
   func attributedSubstring(from range: NSRange) -> NSAttributedString? {
-    guard textReadable, range.location + range.length <= length() else { return nil }
+    let document = text.utf16.count
+    guard textReadable, range.location + range.length <= document else { return nil }
     return NSAttributedString(string: (text as NSString).substring(with: range))
   }
   func attributes(forCharacterIndex: Int, lineHeightRectangle: UnsafeMutablePointer<NSRect>) -> [String: Any] {
     lineHeightRectangle.pointee = rectangleReady ? NSRect(x: caret * 8 + rectangleOffsetX, y: 100 + rectangleOffsetY, width: 1, height: 16) : .zero
     return [:]
   }
-  func firstRect(forCharacterRange: NSRange, actualRange: UnsafeMutablePointer<NSRange>) -> NSRect { .zero }
+  func firstRect(forCharacterRange range: NSRange, actualRange: UnsafeMutablePointer<NSRange>) -> NSRect {
+    let document = text.utf16.count
+    guard glyphRects, rectangleReady, range.location >= 0, range.location < document else { return .zero }
+    let count = min(max(range.length, 0), document - range.location)
+    actualRange.pointee = NSRange(location: range.location, length: count)
+    let unit = (text as NSString).substring(with: NSRange(location: range.location, length: 1))
+    if unit == "\n" || unit == "\r" {
+      return NSRect(x: rectangleOffsetX, y: 84 + rectangleOffsetY, width: 8, height: 16)
+    }
+    return NSRect(x: range.location * 8 + rectangleOffsetX, y: 100 + rectangleOffsetY,
+                  width: max(8, count * 8), height: 16)
+  }
   func windowLevel() -> Int { 0 }
   // Deliberately leaves cached text and selection unchanged until a test publishes an update.
   func insertText(_ text: String, replacementRange: NSRange) {}

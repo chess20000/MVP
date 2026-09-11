@@ -48,4 +48,8 @@ fi
   --identifier local.rime.ghost.frontend --version "$FRONTEND_VERSION" \
   --install-location '/Library/Input Methods' "$FRONTEND_PACKAGE"
 (cd "$FRONTEND_DIST" && /usr/bin/shasum -a 256 "$(basename -- "$FRONTEND_PACKAGE")") > "$FRONTEND_PACKAGE.sha256"
+# Staging copies share the input-method bundle ID. Unregister them so Settings
+# does not list a new 鼠须管 for every package build.
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+if [[ -x "$lsregister" ]]; then "$lsregister" -u "$stage/Squirrel.app" >/dev/null 2>&1 || true; fi
 printf '已打包：%s\n如需安装，请手动运行 scripts/install-frontend.sh。\n' "$FRONTEND_PACKAGE"
