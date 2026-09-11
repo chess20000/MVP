@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO="${GHOST_REPO:-chess20000/MVP}"
-VERSION="${GHOST_VERSION:-1.1.2.10}"
+VERSION="${GHOST_VERSION:-1.1.2.11}"
 PKG_NAME="Squirrel-Ghost-${VERSION}.pkg"
 HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 export HF_ENDPOINT
