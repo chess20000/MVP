@@ -1,0 +1,26 @@
+{
+  "version": "1.1.2.10",
+  "model": "mlx-community/MiniCPM5-1B-4bit",
+  "model_revision": "36447e84d28c57588a6e91907675e44afe54ab00",
+  "deployed_sources": {
+    "frontend/sources/BridgingFunctions.swift": "83688c17c105d884d2f8fa8032bcf2ab99818deaf0551c5eeb5a9850be6c088b",
+    "frontend/sources/CandidateGrid.swift": "cb8b7b943626136ea377d28aabdf4682aa772e04b19193d56826d4c00dcf187b",
+    "frontend/sources/GhostCompletion.swift": "bb0c0bdc1aff45f1fd64e67535e93aa83e11803d9dd531859b58d31d7efd2a1f",
+    "frontend/sources/GhostDiagnostics.swift": "a7edc213738efa6b792635b643cbd6a5efbc9b5557aaf5b2e0a0ec675f1169e8",
+    "frontend/sources/GhostFocus.swift": "ba143b022ac5d1219fa87d96fbc04de1ec7799f1edcdca7c5323b3f8eb0b8ae7",
+    "frontend/sources/GhostHistory.swift": "3132f750aa25542e41ac8a500d6201a43a775802e28b792d342baf34b65db6be",
+    "frontend/sources/InputSource.swift": "4015b0cbe07923b377b524aa224b25ebba3feec704a19899a01bcc76c6606bfe",
+    "frontend/sources/MacOSKeyCodes.swift": "6d8d5c76e2e52d6b79d8c4670e38a1029c268e27a3bf15f0b58a424e2c2aaaff",
+    "frontend/sources/Main.swift": "2af84f9734a139ac13ebc2324b130063edf8aea5ac5b5d24922ca267a359f4a4",
+    "frontend/sources/Squirrel-Bridging-Header.h": "7ee11e90a650ddaefaa742682d5b180dd2af5948fe74743496d64086e1ce9b22",
+    "frontend/sources/SquirrelApplicationDelegate.swift": "d294a8cf160c4c3c2567c7c9fba563dca06a1e35e11ccb0b539d51ab4180ca1f",
+    "frontend/sources/SquirrelConfig.swift": "96f47438f1195eee516d662f7cd231e204e753ee9d7030bbf371ae3ed4dbc516",
+    "frontend/sources/SquirrelInputController.swift": "13451c0324f05cc57cf53eec32118d96651d59875327de3751914ea87c3a36e0",
+    "frontend/sources/SquirrelInstanceGuard.swift": "1c0bb1e9efb30a32ec09fd43d8b16ae403652ce9c618406e0237eccf71b79c68",
+    "frontend/sources/SquirrelPanel.swift": "ecc5bc4551301f6999ed0bd233f32fce9908d6a4b4d5cd9eb14647b1518e4f71",
+    "frontend/sources/SquirrelTheme.swift": "19c4feec9fd334ad541c945a0fca0c681758cbe7070177c94f18a452832a1303",
+    "frontend/sources/SquirrelView.swift": "fd1b6a84a9c77d644b7c7a40d9143704e58547178b9eed469b329649e0c2a21d",
+    "backend/server.py": "d9e44947c4926d23b0d766e2beff51814de050de6658cf315033314ee1cbf511"
+  },
+  "model_weight_sha256": "a23e0c5c79944a0b2cc92cb9ab79376b4dce41e2312383727e21ee43fe19cb4f"
+}

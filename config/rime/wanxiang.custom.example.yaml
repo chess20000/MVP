@@ -1,0 +1,3 @@
+# Merge into an existing Wanxiang patch; do not replace personal configuration.
+patch:
+  context_reorder/context_timeout: 10000
